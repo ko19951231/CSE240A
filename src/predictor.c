@@ -116,12 +116,29 @@ uint8_t tournament_perdictor_select()
     return GLOBAL;
 }
 
+uint8_t c_perdictor_select()
+{
+  uint32_t history = globalHistory & globalHistoryMask;
+  if (tournamentSelectorState[history] == WL || tournamentSelectorState[history] == SL)
+    return LOCAL;
+  else // 0 or 1
+    return GLOBAL;
+}
+
 uint8_t make_prediction_turnament(uint32_t pc)
 {
   if (tournament_perdictor_select() == LOCAL)
     return make_prediction_local(pc);
   else
     return make_prediction_global();
+}
+
+uint8_t make_prediction_c(uint32_t pc)
+{
+  if (c_perdictor_select() == LOCAL)
+    return make_prediction_local(pc);
+  else
+    return make_prediction_gshare(pc);
 }
 
 uint8_t
@@ -141,6 +158,8 @@ make_prediction(uint32_t pc)
   case TOURNAMENT:
     return make_prediction_turnament(pc);
   case CUSTOM:
+ 
+    return make_prediction_c(pc);
   default:
     break;
   }
@@ -173,6 +192,30 @@ uint8_t get_tournament_result(uint32_t pc, uint8_t outcome)
     return GLOBALWIN;
   else
     return DRAW;
+}
+
+
+uint8_t get_c_result(uint32_t pc, uint8_t outcome)
+{
+  uint8_t predictionLocal = make_prediction_local(pc);
+  uint8_t predictionGlobal = make_prediction_gshare(pc);
+  if (predictionLocal == outcome && predictionGlobal != outcome)
+    return LOCALWIN;
+  else if (predictionLocal != outcome && predictionGlobal == outcome)
+    return GLOBALWIN;
+  else
+    return DRAW;
+}
+
+
+uint32_t get_next_selector_c(uint32_t pc, uint32_t selector, uint8_t outcome)
+{
+  uint8_t result = get_c_result(pc, outcome);
+  if (result == LOCALWIN && selector != SL)
+    selector++;
+  else if (result == GLOBALWIN && selector != SG)
+    selector--;
+  return selector;
 }
 
 uint32_t get_next_selector(uint32_t pc, uint32_t selector, uint8_t outcome)
@@ -214,7 +257,24 @@ void train_predictor_tournament(uint32_t pc, uint8_t outcome)
   globalHistory <<= 1;
   globalHistory |= outcome;
 }
+void train_predictor_c(uint32_t pc, uint8_t outcome)
+{
+  uint32_t ghistory = globalHistory & globalHistoryMask;
+  tournamentSelectorState[ghistory] = get_next_selector_c(pc, tournamentSelectorState[ghistory], outcome);
 
+  uint32_t address = pc & pcIndexMask;
+  uint32_t lhistory = localHistory[address] & localHistoryMask;
+  localPredictorState[lhistory] = get_next_state(localPredictorState[lhistory], outcome);
+  localHistory[address] <<= 1;
+  localHistory[address] |= outcome;
+
+
+  uint32_t index = (pc & globalHistoryMask) ^ (globalHistory & globalHistoryMask);
+  globalPredictorState[index] = get_next_state(globalPredictorState[index], outcome);
+
+  globalHistory <<= 1;
+  globalHistory |= outcome;
+}
 void train_predictor_gshare(uint32_t pc, uint8_t outcome)
 {
   uint32_t index = (pc & globalHistoryMask) ^ (globalHistory & globalHistoryMask);
@@ -236,6 +296,7 @@ void train_predictor(uint32_t pc, uint8_t outcome)
   case TOURNAMENT:
     train_predictor_tournament(pc, outcome);
   case CUSTOM:
+    train_predictor_c(pc, outcome);
   default:
     break;
   }
